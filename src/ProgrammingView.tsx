@@ -206,6 +206,36 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
           this.setTooltip('Punto di inizio del programma');
         }
       },
+      'move_indefinitely': {
+        init: function() {
+          this.appendDummyInput()
+              .appendField('vai avanti');
+          this.setPreviousStatement(true, null);
+          this.setNextStatement(true, null);
+          this.setColour('#2E7D32');
+          this.setTooltip('Fa avanzare il robot indefinitamente');
+        }
+      },
+      'move_backward_indefinitely': {
+        init: function() {
+          this.appendDummyInput()
+              .appendField('vai indietro');
+          this.setPreviousStatement(true, null);
+          this.setNextStatement(true, null);
+          this.setColour('#2E7D32');
+          this.setTooltip('Fa retrocedere il robot indefinitamente');
+        }
+      },
+      'stop_motors': {
+        init: function() {
+          this.appendDummyInput()
+              .appendField('arresta marcia');
+          this.setPreviousStatement(true, null);
+          this.setNextStatement(true, null);
+          this.setColour('#2E7D32');
+          this.setTooltip('Arresta la marcia del robot');
+        }
+      },
       'move_forward': {
         init: function() {
           this.appendValueInput('DISTANCE')
@@ -430,6 +460,9 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
       toolbox: `
         <xml xmlns="https://developers.google.com/blockly/xml">
           <category name="Movimento" colour="#2E7D32">
+            <block type="move_indefinitely"></block>
+            <block type="move_backward_indefinitely"></block>
+            <block type="stop_motors"></block>
             <block type="move_forward">
               <value name="DISTANCE">
                 <shadow type="math_number">
@@ -615,6 +648,8 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
     let curY = currentRobotState.position.y;
     let curRot = currentRobotState.rotation;
     let speedMultiplier = 1.0;
+    let motorState: 'STOP' | 'FORWARD' | 'BACKWARD' = 'STOP';
+    let isBlockingMovementRunning = false;
     const variables: Record<string, any> = {};
 
     const getRobotLocalPoints = (rState: any): { x: number; y: number }[] => {
@@ -691,6 +726,115 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
       }
 
       return { minX, maxX, minY, maxY };
+    };
+
+    const startContinuousMovementLoop = async () => {
+      while (isRunningRef.current) {
+        if (motorState !== 'STOP' && !isBlockingMovementRunning) {
+          const direction = motorState === 'FORWARD' ? 1 : -1;
+          const rad = (curRot * Math.PI) / 180;
+          const stepDist = 8 * direction * speedMultiplier; 
+          
+          const nextX = curX + Math.cos(rad) * stepDist;
+          const nextY = curY + Math.sin(rad) * stepDist;
+
+          const map = stateRef.current.maps[stateRef.current.currentMapId];
+          const robotConf = stateRef.current.robots[robotId];
+
+          const localPoints = getRobotLocalPoints(robotConf);
+
+          const cosR = Math.cos(rad);
+          const sinR = Math.sin(rad);
+
+          let collidingPt: { x: number, y: number, localX: number, localY: number } | null = null;
+          let collisionWall: 'LEFT' | 'RIGHT' | 'TOP' | 'BOTTOM' | null = null;
+          let maxPenetration = 0;
+          const margin = 2;
+
+          for (const p of localPoints) {
+            const gx = nextX + p.x * cosR - p.y * sinR;
+            const gy = nextY + p.x * sinR + p.y * cosR;
+
+            if (map) {
+              if (gx < margin) {
+                const pen = margin - gx;
+                if (pen > maxPenetration) {
+                  maxPenetration = pen;
+                  collidingPt = { x: gx, y: gy, localX: p.x, localY: p.y };
+                  collisionWall = 'LEFT';
+                }
+              }
+              if (gx > map.width - margin) {
+                const pen = gx - (map.width - margin);
+                if (pen > maxPenetration) {
+                  maxPenetration = pen;
+                  collidingPt = { x: gx, y: gy, localX: p.x, localY: p.y };
+                  collisionWall = 'RIGHT';
+                }
+              }
+              if (gy < margin) {
+                const pen = margin - gy;
+                if (pen > maxPenetration) {
+                  maxPenetration = pen;
+                  collidingPt = { x: gx, y: gy, localX: p.x, localY: p.y };
+                  collisionWall = 'TOP';
+                }
+              }
+              if (gy > map.height - margin) {
+                const pen = gy - (map.height - margin);
+                if (pen > maxPenetration) {
+                  maxPenetration = pen;
+                  collidingPt = { x: gx, y: gy, localX: p.x, localY: p.y };
+                  collisionWall = 'BOTTOM';
+                }
+              }
+            }
+          }
+
+          if (collidingPt && collisionWall) {
+            let fixed_gx = collidingPt.x;
+            let fixed_gy = collidingPt.y;
+
+            if (collisionWall === 'LEFT') fixed_gx = margin;
+            if (collisionWall === 'RIGHT') fixed_gx = map.width - margin;
+            if (collisionWall === 'TOP') fixed_gy = margin;
+            if (collisionWall === 'BOTTOM') fixed_gy = map.height - margin;
+
+            // Target alignment direction (multiples of 90 degrees)
+            const targetRot = Math.round(curRot / 90) * 90;
+            const diff = targetRot - curRot;
+
+            if (Math.abs(diff) > 0.1) {
+              const stepAngle = Math.min(Math.abs(diff), 30.0) * Math.sign(diff);
+              curRot += stepAngle;
+
+              // Derive new center coordinates using the fixed pivot corner
+              const theta_new = (curRot * Math.PI) / 180;
+              const cosN = Math.cos(theta_new);
+              const sinN = Math.sin(theta_new);
+
+              curX = fixed_gx - (collidingPt.localX * cosN - collidingPt.localY * sinN);
+              curY = fixed_gy - (collidingPt.localX * sinN + collidingPt.localY * cosN);
+            } else {
+              curRot = targetRot;
+              const extents = getRobotRotatedExtents(robotConf, curRot);
+              if (map) {
+                curX = Math.max(-extents.minX + margin, Math.min(map.width - extents.maxX - margin, nextX));
+                curY = Math.max(-extents.minY + margin, Math.min(map.height - extents.maxY - margin, nextY));
+              } else {
+                curX = nextX;
+                curY = nextY;
+              }
+            }
+          } else {
+            curX = nextX;
+            curY = nextY;
+          }
+
+          socket.emit('moveRobot', robotId, { x: curX, y: curY, rotation: curRot, ctrlPressed: isCtrlPressedRef.current || forceRestartRef.current });
+        }
+        await new Promise(r => setTimeout(r, Math.max(10, Math.round(15 / speedMultiplier))));
+      }
     };
 
     const evaluateValue = (block: Blockly.Block | null): any => {
@@ -787,7 +931,14 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
       if (block.type === 'set_speed') {
         const val = evaluateValue(block.getInputTargetBlock('SPEED'));
         speedMultiplier = Math.max(0.1, Math.min(10.0, val / 100));
+      } else if (block.type === 'move_indefinitely') {
+        motorState = 'FORWARD';
+      } else if (block.type === 'move_backward_indefinitely') {
+        motorState = 'BACKWARD';
+      } else if (block.type === 'stop_motors') {
+        motorState = 'STOP';
       } else if (block.type === 'move_forward' || block.type === 'move_backward') {
+        isBlockingMovementRunning = true;
         const val = evaluateValue(block.getInputTargetBlock('DISTANCE'));
         const distance = val * 10;
         const direction = block.type === 'move_forward' ? 1 : -1;
@@ -896,7 +1047,9 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
           socket.emit('moveRobot', robotId, { x: curX, y: curY, rotation: curRot, ctrlPressed: isCtrlPressedRef.current || forceRestartRef.current });
           await new Promise(r => setTimeout(r, Math.max(5, Math.round(10 / speedMultiplier))));
         }
+        isBlockingMovementRunning = false;
       } else if (block.type === 'motor_move') {
+        isBlockingMovementRunning = true;
         const distCm = evaluateValue(block.getInputTargetBlock('DIST'));
         const motor = block.getFieldValue('MOTOR');
         const dir = block.getFieldValue('DIR') === 'FORWARD' ? 1 : -1;
@@ -942,8 +1095,9 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
           socket.emit('moveRobot', robotId, { x: curX, y: curY, rotation: curRot, ctrlPressed: isCtrlPressedRef.current || forceRestartRef.current });
           await new Promise(r => setTimeout(r, Math.max(5, Math.round(10 / speedMultiplier))));
         }
-
+        isBlockingMovementRunning = false;
       } else if (block.type === 'turn_right' || block.type === 'turn_left') {
+        isBlockingMovementRunning = true;
         const angle = evaluateValue(block.getInputTargetBlock('ANGLE'));
         const direction = block.type === 'turn_right' ? 1 : -1;
         const targetRotation = curRot + (angle * direction);
@@ -956,6 +1110,7 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
           await new Promise(r => setTimeout(r, Math.max(5, Math.round(10 / speedMultiplier))));
         }
         curRot = targetRotation;
+        isBlockingMovementRunning = false;
       } else if (block.type === 'wait_until_distance') {
         const threshold = Number(block.getFieldValue('DISTANCE'));
         const sensorId = block.getFieldValue('SENSOR_ID');
@@ -1071,9 +1226,16 @@ export const ProgrammingView = forwardRef<ProgrammingViewHandle, ProgrammingView
 
     // Start execution from the block connected to the start block
     const nextBlock = startBlock.getNextBlock();
+    startContinuousMovementLoop();
     if (nextBlock) {
       console.log("Starting execution sequence...");
       await executeChain(nextBlock);
+    }
+
+    // Se il programma è terminato ma i motori sono ancora in marcia indefinita, 
+    // manteniamo il flusso attivo finché l'utente non lo arresta o i motori si fermano.
+    while (isRunningRef.current && motorState !== 'STOP') {
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
     
     console.log("Sequence completed.");

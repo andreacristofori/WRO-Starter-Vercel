@@ -1,6 +1,8 @@
 import { SimulationState, RobotState, MapConfig } from './types';
 
 // ------------- Color Sensing Logic -------------
+const activeEngineInstances: SimulationEngine[] = [];
+
 let cachedMapCanvas: HTMLCanvasElement | null = null;
 let cachedMapCtx: CanvasRenderingContext2D | null = null;
 let cachedMapId: string | null = null;
@@ -14,7 +16,11 @@ function loadMapImage(mapId: string, url: string) {
   isImageLoading = true;
   
   const img = new Image();
-  img.crossOrigin = 'anonymous';
+  // Only set crossOrigin if loading from a remote external HTTP/HTTPS URL
+  // Relative/local paths will fail under CORS in certain iframe settings if crossOrigin is set.
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    img.crossOrigin = 'anonymous';
+  }
   
   img.onload = () => {
     cachedMapCanvas = document.createElement('canvas');
@@ -32,6 +38,11 @@ function loadMapImage(mapId: string, url: string) {
     cachedMapUrl = url;
     isImageLoading = false;
     console.log(`Loaded map image for ${mapId} for color sensing.`);
+    
+    // Immediately calculate sensors with the loaded canvas and notify React state
+    activeEngineInstances.forEach(engine => {
+      engine.updateAllSensors();
+    });
   };
 
   img.onerror = (e) => {
@@ -1152,6 +1163,17 @@ export class SimulationEngine {
 
     constructor() {
         this.state = getInitialState('robo-starter-italy');
+        if (!activeEngineInstances.includes(this)) {
+            activeEngineInstances.push(this);
+        }
+    }
+
+    public updateAllSensors() {
+        const map = this.state.maps[this.state.currentMapId];
+        Object.values(this.state.robots).forEach(robot => {
+            updateRobotSensors(robot, map, this.state);
+        });
+        this.emitUpdate();
     }
 
     public getState(): SimulationState {
