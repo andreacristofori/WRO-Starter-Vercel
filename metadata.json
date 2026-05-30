@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Wro Starter finita per vercel",
+  "description": "Dovrebbe andare tutto. V1.0",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

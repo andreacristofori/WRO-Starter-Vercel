@@ -1,11 +1,32 @@
-<div align="center">
+# WRO Starter Simulator
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+This is a real-time simulation server for the WRO Starter competition.
 
-  <h1>Built with AI Studio</h2>
+## Robot API
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+Your robots should connect to this server via **WebSocket** using standard `socket.io-client`.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+### Connection
+```javascript
+import { io } from 'socket.io-client';
+// Connect to the app URL
+const socket = io('https://APP_URL'); 
+```
 
-</div>
+### Events to Emit (Client -> Server)
+
+- `registerRobot(data, callback)`: Register a new robot.
+  - `data`: `{ name: 'MyRobot', color: '#ff0000' }`
+  - `callback`: `(response) => { console.log(response.id) }`
+- `moveRobot(robotId, positionData)`: Update robot position.
+  - `positionData`: `{ x: 200, y: 150, rotation: 90 }`
+- `interactObject(robotId, objectId, action)`: Interact with a field object.
+  - `action`: `'collect'` or `'drop'`
+
+### Events to Listens (Server -> Client)
+
+- `stateUpdate(state)`: Sent on any change (movement, objects, timer).
+- `simulationStarted()`: The simulation timer has begun.
+- `simulationStopped()`: The simulation was stopped.
+
+See `example-robot.ts` for a working client example!
