@@ -545,9 +545,22 @@ export function getRobotRotatedExtents(robot: any, rotationDeg: number) {
 }
 
 export function calculateScore(simulationState: any) {
+  if (simulationState.status === 'running') {
+    simulationState.score = 0;
+    simulationState.scoreBreakdown = [];
+    simulationState.treeBonus = 0;
+    simulationState.startAreaBonus = 0;
+    return;
+  }
+
   let newScore = 0;
   let landfillRifiutiCount = 0;
   const breakdown: string[] = [];
+  
+  let occupiedGreenStorage = false;
+  let occupiedStore = false;
+  let occupiedBuilding = false;
+  let occupiedBeach = false;
   
   const map = simulationState.maps[simulationState.currentMapId];
   if (map) {
@@ -704,16 +717,10 @@ export function calculateScore(simulationState: any) {
           breakdown.push('Tartaruga = 20 punti');
         }
       } else if (objId.includes('omino')) {
-        let scoredThisGuardian = false;
-        
         if (isInGreenStorageArea) {
-          newScore += 15;
-          scoredThisGuardian = true;
-          breakdown.push('Guardiano = 15 punti');
+          occupiedGreenStorage = true;
         } else if (inStoreArea) {
-          newScore += 15;
-          scoredThisGuardian = true;
-          breakdown.push('Guardiano = 15 punti');
+          occupiedStore = true;
         } else {
           const closestX = Math.max(2045, Math.min(pxC, 2340));
           const closestY = Math.max(647, Math.min(pyC, 1150));
@@ -721,10 +728,10 @@ export function calculateScore(simulationState: any) {
           const dy = pyC - closestY;
           const touchesBuildingArea = (dx * dx + dy * dy) <= (objR * objR);
 
-          if (inBeachArea || touchesBuildingArea) {
-            newScore += 15;
-            scoredThisGuardian = true;
-            breakdown.push('Guardiano = 15 punti');
+          if (touchesBuildingArea) {
+            occupiedBuilding = true;
+          } else if (inBeachArea) {
+            occupiedBeach = true;
           }
         }
       } else if (objId.includes('rifiuto')) {
@@ -742,6 +749,24 @@ export function calculateScore(simulationState: any) {
         }
       }
     }
+  }
+
+  // Applica il punteggio per i guardiani nelle aree occupate
+  if (occupiedGreenStorage) {
+    newScore += 15;
+    breakdown.push('Guardiano (Area Verde) = 15 punti');
+  }
+  if (occupiedStore) {
+    newScore += 15;
+    breakdown.push('Guardiano (Negozi) = 15 punti');
+  }
+  if (occupiedBuilding) {
+    newScore += 15;
+    breakdown.push('Guardiano (Edificio) = 15 punti');
+  }
+  if (occupiedBeach) {
+    newScore += 15;
+    breakdown.push('Guardiano (Spiaggia) = 15 punti');
   }
 
   // Calculate End-of-Execution Bonuses
@@ -1275,6 +1300,7 @@ export class SimulationEngine {
                 this.state.status = 'finished';
                 if (this.timerInterval) clearInterval(this.timerInterval);
                 this.timerInterval = null;
+                calculateScore(this.state);
                 this.emitUpdate();
             }
         }, 1000);
@@ -1283,6 +1309,7 @@ export class SimulationEngine {
     public startProgram() {
         this.state.status = 'running';
         this.startTimer();
+        calculateScore(this.state);
         this.emitUpdate();
     }
     
@@ -1292,6 +1319,7 @@ export class SimulationEngine {
             clearInterval(this.timerInterval);
             this.timerInterval = null;
         }
+        calculateScore(this.state);
         this.emitUpdate();
     }
 
